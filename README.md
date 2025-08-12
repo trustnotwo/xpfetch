@@ -1,0 +1,1 @@
+You must install PowerShell 2.0 before this script will work. Install by running xpfetch.bat as administator, or just running the xpfetch_ps.ps1 file directly in PowerShell. Once installed, the script can be ran by typing xpfetch in normal command prompt.
