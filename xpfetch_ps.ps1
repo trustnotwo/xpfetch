@@ -31,14 +31,17 @@ function Get-ConsoleColor([string]$colorName) {
     return [Enum]::Parse([ConsoleColor], $colorName, $true)
 }
 
-foreach ($line in Get-Content $configPath) {
-    if ($line -match '^\s*([^=]+)\s*=\s*(.+)\s*$') {
-        $config[$matches[1]] = $matches[2]
+if (Test-Path $configPath) {
+    foreach ($line in Get-Content $configPath) {
+        if ($line -match '^\s*([^=]+)\s*=\s*(.+)\s*$') {
+            $config[$matches[1]] = $matches[2]
+        }
     }
 }
-$logoColor  = Get-ConsoleColor $config["logoColor"]
-$textColor1 = Get-ConsoleColor $config["TextColor1"]
-$textColor2 = Get-ConsoleColor $config["TextColor2"]
+
+$logoColor  = if ($config.ContainsKey("logoColor")) { Get-ConsoleColor $config["logoColor"] } else { [ConsoleColor]::Cyan }
+$textColor1 = if ($config.ContainsKey("TextColor1")) { Get-ConsoleColor $config["TextColor1"] } else { [ConsoleColor]::White }
+$textColor2 = if ($config.ContainsKey("TextColor2")) { Get-ConsoleColor $config["TextColor2"] } else { [ConsoleColor]::Gray }
 
 $diskPercent = $false
 if ($config.ContainsKey("diskPercent")) { $diskPercent = [System.Convert]::ToBoolean($config["diskPercent"]) }
@@ -48,6 +51,9 @@ if ($config.ContainsKey("showVRAM")) { $showVRAM = [System.Convert]::ToBoolean($
 
 $ramPercent = $false
 if ($config.ContainsKey("ramPercent")) { $ramPercent = [System.Convert]::ToBoolean($config["ramPercent"]) }
+
+$batteryEnabled = $false
+if ($config.ContainsKey("batteryPercent")) { $batteryEnabled = [System.Convert]::ToBoolean($config["batteryPercent"]) }
 
 function Convert-WmiDate($wmiDate) { 
     return [datetime]::ParseExact($wmiDate.Substring(0,14), "yyyyMMddHHmmss", $null)
@@ -61,6 +67,17 @@ $cpu = Get-WmiObject Win32_Processor | Select-Object -First 1
 $gpuObjects = Get-WmiObject Win32_VideoController
 $gpuCount = $gpuObjects.Count
 $gpuLines = @()
+
+try {
+    $battery = Get-WmiObject Win32_Battery
+    if ($battery) {
+        $batteryPercent = "$($battery.EstimatedChargeRemaining)%"
+    } else {
+        $batteryPercent = "N/A"
+    }
+} catch {
+    $batteryPercent = "N/A"
+}
 
 $gpuIndex = 1
 foreach ($gpu in $gpuObjects) {
@@ -88,7 +105,7 @@ foreach ($gpu in $gpuObjects) {
 $monitorResolutions = @()
 foreach ($gpu in $gpuObjects) {
     if ($gpu.CurrentHorizontalResolution -and $gpu.CurrentVerticalResolution) {
-        $monitorResolutions += "$($gpu.CurrentHorizontalResolution)x$($gpu.CurrentVerticalResolution)"
+        $monitorResolutions += "$($gpu.CurrentHorizontalResolution)x$($gpu.CurrentVerticalResolution) $($gpu.CurrentRefreshRate)Hz"
     } elseif ($gpu.VideoModeDescription) {
         $monitorResolutions += $gpu.VideoModeDescription
     }
@@ -150,6 +167,12 @@ foreach ($drive in $drives) {
     }
 }
 
+$threads = ""
+if ($cpu.NumberOfCores -ne $cpu.NumberOfLogicalProcessors){
+    $threads = " ($($cpu.NumberOfLogicalProcessors) threads)"
+}
+
+
 $topInfoLines = @(@("", $userHostLine), @("", $separatorLine))
 $infoLines = @(
     @("OS: ", $os.Caption),
@@ -157,8 +180,9 @@ $infoLines = @(
     @("IP: ", $ipAddress),
     @("Model: ", $model),
     @("CPU: ", $cpuName.ProcessorNameString),
-    @("Cores: ", $cpu.NumberOfCores),
-    @("RAM: ", $ramDisplay)
+    @("Cores: ", "$($cpu.NumberOfCores)$threads"),
+    @("RAM: ", $ramDisplay),
+    @("Theme: ", $themeName)
 )
 
 $finalInfoLines = @()
@@ -171,8 +195,13 @@ for ($i = 0; $i -lt $infoLines.Count; $i++) {
 
 $finalInfoLines += $gpuLines
 $finalInfoLines += ,$resolutionLine
-$finalInfoLines += ,@("Theme: ", $themeName)
+
+if ($batteryEnabled -and $batteryPercent -ne "N/A") {
+    $finalInfoLines += ,@("Battery: ", $batteryPercent)
+}
+
 $finalInfoLines += ,@("Uptime: ", $uptimeStr)
+
 $allInfoLines = $topInfoLines + $finalInfoLines
 $logoHeight = $logoLines.Count
 $infoHeight = $allInfoLines.Count
