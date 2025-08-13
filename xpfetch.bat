@@ -5,6 +5,7 @@ REM Define target path
 set TARGETDIR=C:\Windows
 set BATCHNAME=xpfetch.bat
 set SCRIPTNAME=xpfetch_ps.ps1
+set CONFIGNAME=xpconf.ini
 
 REM Check if running from C:\Windows
 if /I "%~dp0"=="%TARGETDIR%\" goto :RUN
@@ -19,6 +20,7 @@ echo Installing xpfetch...
 
 copy "%~dp0%BATCHNAME%" "%TARGETDIR%\%BATCHNAME%" >nul
 copy "%~dp0%SCRIPTNAME%" "%TARGETDIR%\%SCRIPTNAME%" >nul
+copy "%~dp0%CONFNAME%" "%TARGETDIR%\%CONFNAME%" >nul
 
 echo Installed to %TARGETDIR%
 goto :RUN
