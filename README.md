@@ -8,5 +8,4 @@ Here's an example image of the script running on my Precision M6300
 <img width="833" height="328" alt="image" src="https://github.com/user-attachments/assets/91b31d7f-d58e-498f-a679-e682bd180947" />
 
 Here's the same script running on my main desktop PC
-<img width="823" height="468" alt="image" src="https://github.com/user-attachments/assets/75003879-0655-48d8-ba7f-e6e9ff65b89b" />
-
+<img width="1303" height="741" alt="image" src="https://github.com/user-attachments/assets/e64558fa-ef02-402e-acdd-e0d6e25fb255" />
