@@ -7,4 +7,4 @@ By default Windows XP has a super narrow max window width for Command Prompt. Yo
 Here's an example image of the script running on my Precision M6300
 <img width="833" height="328" alt="image" src="https://github.com/user-attachments/assets/91b31d7f-d58e-498f-a679-e682bd180947" />
 
-<img width="1303" height="741" alt="image" src="https://github.com/user-attachments/assets/ea2cf799-cf14-44ba-a3fe-6d61e7a733bc" />
+<img width="833" height="328" alt="image" src="https://github.com/user-attachments/assets/ea2cf799-cf14-44ba-a3fe-6d61e7a733bc" />
