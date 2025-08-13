@@ -22,7 +22,7 @@ $logoLines = @(
 "                     +++++++++++++          "
 )
 
-$configPath = Join-Path $([System.IO.Path]::GetDirectoryName($MyInvocation.MyCommand.Path)) "xpconf.ini"
+$configPath = "$env:APPDATA\xpfetch\xpconf.ini"
 $config = @{}
 
 function Get-ConsoleColor([string]$colorName) {

@@ -18,14 +18,15 @@ if exist "%TARGETDIR%\%BATCHNAME%" (
 REM Installer: copy batch and PowerShell script to C:\Windows
 echo Installing xpfetch...
 
+mkdir "%APPDATA%\xpfetch" 2>nul
 copy "%~dp0%BATCHNAME%" "%TARGETDIR%\%BATCHNAME%" >nul
-copy "%~dp0%SCRIPTNAME%" "%TARGETDIR%\%SCRIPTNAME%" >nul
-copy "%~dp0%CONFNAME%" "%TARGETDIR%\%CONFNAME%" >nul
+copy "%~dp0%SCRIPTNAME%" "%APPDATA%\xpfetch\%SCRIPTNAME%" >nul
+copy "%~dp0%CONFIGNAME%" "%APPDATA%\xpfetch\%CONFIGNAME%" >nul
 
 echo Installed to %TARGETDIR%
 goto :RUN
 
 :RUN
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "%TARGETDIR%\%SCRIPTNAME%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '%APPDATA%\xpfetch\%SCRIPTNAME%'"
 
 endlocal
