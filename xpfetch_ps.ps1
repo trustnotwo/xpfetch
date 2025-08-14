@@ -1,3 +1,5 @@
+$XPFetchVersion = "1.31"
+
 $logoLines = @(
 "           ++++++++++++                      ",
 "        ++++++++++++++++++                   ",
@@ -77,6 +79,13 @@ try {
     }
 } catch {
     $batteryPercent = "N/A"
+}
+
+switch ($battery.BatteryStatus) {
+    {@(6,7,8,9) -contains $_}   { $batteryStatus = " (Charging)" }
+    {@(1,4,5) -contains $_}     { $batteryStatus = " (Discharging)" }
+    {@(3,11) -contains $_}      { $batteryStatus = " (Fully Charged)" }
+    default                     { $batteryStatus = " (Unknown)" }
 }
 
 $gpuIndex = 1
@@ -197,7 +206,7 @@ $finalInfoLines += $gpuLines
 $finalInfoLines += ,$resolutionLine
 
 if ($batteryEnabled -and $batteryPercent -ne "N/A") {
-    $finalInfoLines += ,@("Battery: ", $batteryPercent)
+    $finalInfoLines += ,@("Battery: ", "$($batteryPercent)$batteryStatus")
 }
 
 $finalInfoLines += ,@("Uptime: ", $uptimeStr)
