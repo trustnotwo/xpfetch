@@ -1,9 +1,9 @@
-$XPFetchVersion = "1.3"
+$XPFetchVersion = "1.32"
 
 $origFG = [Console]::ForegroundColor
 $origBG = [Console]::BackgroundColor
 
-
+# Color map
 $LogoColorMap = @{
   'k'  = [ConsoleColor]::Black
   'd'  = [ConsoleColor]::DarkGray
@@ -23,43 +23,59 @@ $LogoColorMap = @{
   'dy' = [ConsoleColor]::DarkYellow
 }
 
-function Write-ColoredAscii {
+# FAST parser
+function Parse-ColoredLine {
     param(
         [string]$Line,
-        [ConsoleColor]$DefaultColor
+        [ConsoleColor]$DefaultColor,
+        [hashtable]$ColorMap
     )
-    $currentColor = $DefaultColor
-    $pos = 0
-    while ($pos -lt $Line.Length) {
-        if ($Line[$pos] -eq '{') {
-            $endTag = $Line.IndexOf('}', $pos + 1)
-            if ($endTag -gt $pos) {
-                $tag = $Line.Substring($pos + 1, $endTag - $pos - 1)
-                if ($tag -eq "/") {
-                    $currentColor = $DefaultColor
-                } elseif ($LogoColorMap.ContainsKey($tag)) {
-                    $currentColor = $LogoColorMap[$tag]
+
+    $segments = New-Object System.Collections.ArrayList
+    $sb = New-Object System.Text.StringBuilder
+    $cur = $DefaultColor
+    $i = 0
+
+    while ($i -lt $Line.Length) {
+        $ch = $Line[$i]
+        if ($ch -eq '{') {
+            $end = $Line.IndexOf('}', $i + 1)
+            if ($end -gt $i) {
+                if ($sb.Length -gt 0) {
+                    $null = $segments.Add(@{ Text = $sb.ToString(); Color = $cur })
+                    [void]$sb.Remove(0, $sb.Length)
                 }
-                $pos = $endTag + 1
+                $tag = $Line.Substring($i + 1, $end - $i - 1)
+                if ($tag -eq "/") { $cur = $DefaultColor }
+                elseif ($ColorMap.ContainsKey($tag)) { $cur = $ColorMap[$tag] }
+                $i = $end + 1
                 continue
             }
         }
-        Write-Host -NoNewline $Line[$pos] -ForegroundColor $currentColor
-        $pos++
+        [void]$sb.Append($ch)
+        $i++
+    }
+
+    if ($sb.Length -gt 0) {
+        $null = $segments.Add(@{ Text = $sb.ToString(); Color = $cur })
+    }
+
+    $len = 0
+    foreach ($seg in $segments) { $len += $seg.Text.Length }
+
+    return @{ Segments = $segments; Length = $len }
+}
+
+# FAST writer (PS2-safe)
+function Write-ColoredSegments {
+    param($ParsedLine)
+    foreach ($seg in $ParsedLine.Segments) {
+        [Console]::ForegroundColor = $seg.Color
+        [Console]::Write($seg.Text)
     }
 }
 
-
-function Measure-VisibleLength {
-    param([string]$Line)
-
-    if (-not $Line) { return 0 }
-    # Remove all block tags {xxx}
-    $stripped = [regex]::Replace($Line, '\{[^}]*\}', '')
-    return $stripped.Length
-}
-
-
+#  Config & helpers
 $configPath = "$env:APPDATA\xpfetch\xpconf.ini"
 $config = @{}
 
@@ -80,7 +96,6 @@ if (Test-Path $configPath) {
 
 function Resolve-LogoPath {
     param([hashtable]$cfg)
-
     $defaultLogoDir  = Join-Path $env:APPDATA "xpfetch\logos"
     $logoDir  = if ($cfg.ContainsKey("logodir")  -and $cfg["logodir"].Trim())  { $cfg["logodir"].Trim() }  else { $defaultLogoDir }
     $logoFile = if ($cfg.ContainsKey("logofile") -and $cfg["logofile"].Trim()) { $cfg["logofile"].Trim() } else {
@@ -91,19 +106,14 @@ function Resolve-LogoPath {
         }
         "logo$($id).txt"
     }
-
     if ([System.IO.Path]::IsPathRooted($logoFile)) { $logoFile } else { Join-Path $logoDir $logoFile }
 }
 
 function Load-LogoLines {
     param([hashtable]$cfg)
-
     $path = Resolve-LogoPath -cfg $cfg
-    if (Test-Path $path) {
-        return ,(Get-Content -LiteralPath $path)  #
-    }
-
-    return @(
+    if (Test-Path $path) { return ,(Get-Content -LiteralPath $path) }
+    @(
 "           ++++++++++++                      ",
 "        ++++++++++++++++++                   ",
 "        ++++++++++++++++++  +               ",
@@ -139,11 +149,9 @@ $showVRAM       = ($config.ContainsKey("showvram")       -and [System.Convert]::
 $ramPercent     = ($config.ContainsKey("rampercent")     -and [System.Convert]::ToBoolean($config["rampercent"]))
 $batteryEnabled = ($config.ContainsKey("batterypercent") -and [System.Convert]::ToBoolean($config["batterypercent"]))
 
-function Convert-WmiDate($wmiDate) {
-    return [datetime]::ParseExact($wmiDate.Substring(0,14), "yyyyMMddHHmmss", $null)
-}
+function Convert-WmiDate($wmiDate) { return [datetime]::ParseExact($wmiDate.Substring(0,14), "yyyyMMddHHmmss", $null) }
 
-
+# Pulling System Info
 $os = Get-WmiObject Win32_OperatingSystem
 $cs = Get-WmiObject Win32_ComputerSystem
 $model = $cs.Model
@@ -153,26 +161,25 @@ $gpuObjects = Get-WmiObject Win32_VideoController
 $gpuCount = $gpuObjects.Count
 $gpuLines = @()
 
-# Battery
+# Battery (safe on desktops)
+$battery = $null
+$batteryPercent = "N/A"
+$batteryStatus  = ""
 try {
     $battery = Get-WmiObject Win32_Battery
-    if ($battery) {
-        $batteryPercent = "$($battery.EstimatedChargeRemaining)%"
-    } else {
-        $batteryPercent = "N/A"
+    if ($battery) { $batteryPercent = "$($battery.EstimatedChargeRemaining)%" }
+} catch { }
+
+if ($battery -and $battery.BatteryStatus -ne $null) {
+    switch ($battery.BatteryStatus) {
+        {@(6,7,8,9) -contains $_}   { $batteryStatus = " (Charging)" }
+        {@(1,4,5) -contains $_}     { $batteryStatus = " (Discharging)" }
+        {@(3,11) -contains $_}      { $batteryStatus = " (Fully Charged)" }
+        default                     { $batteryStatus = " (Unknown)" }
     }
-} catch {
-    $batteryPercent = "N/A"
 }
 
-switch ($battery.BatteryStatus) {
-    {@(6,7,8,9) -contains $_}   { $batteryStatus = " (Charging)" }
-    {@(1,4,5) -contains $_}     { $batteryStatus = " (Discharging)" }
-    {@(3,11) -contains $_}      { $batteryStatus = " (Fully Charged)" }
-    default                     { $batteryStatus = " (Unknown)" }
-}
-
-# GPU(s)
+# GPUs
 $gpuIndex = 1
 foreach ($gpu in $gpuObjects) {
     if ($showVRAM -eq $true) {
@@ -196,7 +203,7 @@ foreach ($gpu in $gpuObjects) {
     }
 }
 
-# Monitor(s)
+# Monitors
 $monitorResolutions = @()
 foreach ($gpu in $gpuObjects) {
     if ($gpu.CurrentHorizontalResolution -and $gpu.CurrentVerticalResolution) {
@@ -220,43 +227,49 @@ try {
 
 # Network
 $validIPs = @()
-$adapters = Get-WmiObject Win32_NetworkAdapterConfiguration |
-    Where-Object { $_.IPAddress -ne $null -and $_.IPEnabled -eq $true }
+$adapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPAddress -ne $null -and $_.IPEnabled -eq $true }
 
 foreach ($adapter in $adapters) {
-    for ($i = 0; $i -lt $adapter.IPAddress.Count; $i++) {
-        $ip = $adapter.IPAddress[$i]
+    $ipArr   = @()
+    $maskArr = @()
+    if ($adapter.IPAddress -ne $null) { $ipArr = @($adapter.IPAddress) }
+    if ($adapter.IPSubnet  -ne $null) { $maskArr = @($adapter.IPSubnet)  }
+
+    for ($i = 0; $i -lt $ipArr.Count; $i++) {
+        $ip = $ipArr[$i]
+        if ($ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { continue }
+        if ($ip -eq "0.0.0.0" -or $ip.StartsWith("127.") -or $ip.StartsWith("169.")) { continue }
+
         $mask = $null
-        if ($adapter.IPSubnet.Count -gt $i) {
-            $mask = $adapter.IPSubnet[$i]
+        if ($i -lt $maskArr.Count) { $mask = $maskArr[$i] }
+
+        $cidrBits = $null
+        if ($mask) {
+            if ($mask -match '^\d{1,2}$') {
+                $cidrBits = [int]$mask
+            } elseif ($mask -match '^\d{1,3}(\.\d{1,3}){3}$') {
+                $cidrBits = 0
+                foreach ($oct in ($mask -split '\.')) {
+                    $b = [Convert]::ToString([int]$oct, 2).PadLeft(8,'0')
+                    $cidrBits += ($b -replace '0','').Length
+                }
+            }
         }
 
-        if ($ip -match '^\d{1,3}(\.\d{1,3}){3}$' -and
-            $ip -ne "0.0.0.0" -and
-            -not $ip.StartsWith("127.") -and
-            -not $ip.StartsWith("169.")) {
-
-            $cidrSuffix = ""
-            if ($mask -and $mask -match '^\d{1,3}(\.\d{1,3}){3}$') {
-                $cidrBits = ($mask -split '\.') |
-                    ForEach-Object { [Convert]::ToString([int]$_, 2).PadLeft(8,'0') } |
-                    ForEach-Object { ($_ -split '1').Count - 1 } |
-                    Measure-Object -Sum | Select-Object -ExpandProperty Sum
-                $cidrSuffix = "/$cidrBits"
-            }
-
-            $validIPs += "$ip$cidrSuffix"
+        if ($cidrBits -ne $null) {
+            $validIPs += "$ip/$cidrBits"
+        } else {
+            $validIPs += $ip
         }
     }
 }
-
 $ipAddress = if ($validIPs.Count -gt 0) { $validIPs[0] } else { "Unknown" }
 
 # Uptime
 $uptime = ((Get-Date) - $os.ConvertToDateTime($os.LastBootUpTime))
 $uptimeStr = "{0}d {1}h {2}m" -f $uptime.Days, $uptime.Hours, $uptime.Minutes
 
-# Hostname
+# Host/User
 $username = $cs.UserName
 if ($username -like "*\*") { $username = $username.Split('\')[-1] }
 $userHostLine = "$username@$($cs.Name)"
@@ -276,7 +289,6 @@ if ($totalMB -ge 4096) {
 } else {
     $ramDisplay = "$usedMB MB / $totalMB MB"
 }
-
 if ($ramPercent) {
     $ramPercentUsed = [math]::Round(($usedMemoryKB / $totalMemoryKB) * 100)
     $ramDisplay += " ($ramPercentUsed`%)"
@@ -304,6 +316,7 @@ if ($cpu.NumberOfCores -ne $cpu.NumberOfLogicalProcessors){
     $threads = " ($($cpu.NumberOfLogicalProcessors) threads)"
 }
 
+# Info lines
 $topInfoLines = @(@("", $userHostLine), @("", $separatorLine))
 $infoLines = @(
     @("OS: ", $os.Caption),
@@ -315,7 +328,6 @@ $infoLines = @(
     @("RAM: ", $ramDisplay),
     @("Theme: ", $themeName)
 )
-
 $finalInfoLines = @()
 for ($i = 0; $i -lt $infoLines.Count; $i++) {
     $finalInfoLines += ,$infoLines[$i]
@@ -323,28 +335,23 @@ for ($i = 0; $i -lt $infoLines.Count; $i++) {
         foreach ($line in $driveInfoLines) { $finalInfoLines += ,$line }
     }
 }
-
 $finalInfoLines += $gpuLines
 $finalInfoLines += ,$resolutionLine
-
 if ($batteryEnabled -and $batteryPercent -ne "N/A") {
     $finalInfoLines += ,@("Battery: ", "$($batteryPercent)$batteryStatus")
 }
-
 $finalInfoLines += ,@("Uptime: ", $uptimeStr)
-
 $allInfoLines = $topInfoLines + $finalInfoLines
 
-$logoWidth = 42
-if ($logoLines -and $logoLines.Count -gt 0) {
-    $maxVis = 0
-    foreach ($ln in $logoLines) {
-        $v = Measure-VisibleLength $ln
-        if ($v -gt $maxVis) { $maxVis = $v }
-    }
-    if ($maxVis -gt 0) { $logoWidth = $maxVis }
+$parsedLogo = @()
+$logoWidth = 0
+foreach ($ln in $logoLines) {
+    $p = Parse-ColoredLine -Line $ln -DefaultColor $logoColor -ColorMap $LogoColorMap
+    $parsedLogo += ,$p
+    if ($p.Length -gt $logoWidth) { $logoWidth = $p.Length }
 }
 
+# Centering-
 $logoHeight = $logoLines.Count
 $infoHeight = $allInfoLines.Count
 $paddingTop = [Math]::Max([Math]::Floor(($logoHeight - $infoHeight) / 2), 0)
@@ -353,20 +360,25 @@ for ($i = 0; $i -lt $paddingTop; $i++) { $paddedInfoLines += ,@("","") }
 $paddedInfoLines += $allInfoLines
 $maxLines = [Math]::Max($logoLines.Count, $paddedInfoLines.Count)
 
+# Render
 Write-Host ""
 for ($i = 0; $i -lt $maxLines; $i++) {
-    $logo = if ($i -lt $logoLines.Count) { $logoLines[$i] } else { " " * $logoWidth }
+
+    if ($i -lt $parsedLogo.Count) {
+        $p = $parsedLogo[$i]
+        Write-ColoredSegments -ParsedLine $p
+        $pad = [Math]::Max($logoWidth - $p.Length, 0)
+        if ($pad -gt 0) { [Console]::Write((" " * $pad)) }
+    } else {
+        [Console]::Write((" " * $logoWidth))
+    }
+
+    [Console]::Write("    ")
 
     if ($i -lt $paddedInfoLines.Count) {
         $label = $paddedInfoLines[$i][0]
         $value = $paddedInfoLines[$i][1]
     } else { $label = ""; $value = "" }
-
-    Write-ColoredAscii -Line $logo -DefaultColor $logoColor
-	
-    $lineVisible = Measure-VisibleLength $logo
-    $pad = [Math]::Max($logoWidth - $lineVisible, 0) + 4  
-    if ($pad -gt 0) { Write-Host -NoNewline (" " * $pad) }
 
     if ($value -ne "") {
         if ($label -eq "") {
@@ -379,7 +391,6 @@ for ($i = 0; $i -lt $maxLines; $i++) {
         Write-Host ""
     }
 }
-Write-Host ""
 
 [Console]::ForegroundColor = $origFG
 [Console]::BackgroundColor = $origBG
