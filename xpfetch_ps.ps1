@@ -1,6 +1,109 @@
-$XPFetchVersion = "1.31"
+$XPFetchVersion = "1.3"
 
-$logoLines = @(
+$origFG = [Console]::ForegroundColor
+$origBG = [Console]::BackgroundColor
+
+
+$LogoColorMap = @{
+  'k'  = [ConsoleColor]::Black
+  'd'  = [ConsoleColor]::DarkGray
+  'l'  = [ConsoleColor]::Gray
+  'w'  = [ConsoleColor]::White
+  'r'  = [ConsoleColor]::Red
+  'g'  = [ConsoleColor]::Green
+  'b'  = [ConsoleColor]::Blue
+  'c'  = [ConsoleColor]::Cyan
+  'm'  = [ConsoleColor]::Magenta
+  'y'  = [ConsoleColor]::Yellow
+  'dr' = [ConsoleColor]::DarkRed
+  'dg' = [ConsoleColor]::DarkGreen
+  'db' = [ConsoleColor]::DarkBlue
+  'dc' = [ConsoleColor]::DarkCyan
+  'dm' = [ConsoleColor]::DarkMagenta
+  'dy' = [ConsoleColor]::DarkYellow
+}
+
+function Write-ColoredAscii {
+    param(
+        [string]$Line,
+        [ConsoleColor]$DefaultColor
+    )
+    $currentColor = $DefaultColor
+    $pos = 0
+    while ($pos -lt $Line.Length) {
+        if ($Line[$pos] -eq '{') {
+            $endTag = $Line.IndexOf('}', $pos + 1)
+            if ($endTag -gt $pos) {
+                $tag = $Line.Substring($pos + 1, $endTag - $pos - 1)
+                if ($tag -eq "/") {
+                    $currentColor = $DefaultColor
+                } elseif ($LogoColorMap.ContainsKey($tag)) {
+                    $currentColor = $LogoColorMap[$tag]
+                }
+                $pos = $endTag + 1
+                continue
+            }
+        }
+        Write-Host -NoNewline $Line[$pos] -ForegroundColor $currentColor
+        $pos++
+    }
+}
+
+
+function Measure-VisibleLength {
+    param([string]$Line)
+
+    if (-not $Line) { return 0 }
+    # Remove all block tags {xxx}
+    $stripped = [regex]::Replace($Line, '\{[^}]*\}', '')
+    return $stripped.Length
+}
+
+
+$configPath = "$env:APPDATA\xpfetch\xpconf.ini"
+$config = @{}
+
+function Get-ConsoleColor([string]$colorName) {
+    if ([string]::IsNullOrEmpty($colorName)) { return [ConsoleColor]::White }
+    $colorName = $colorName.Trim()
+    return [Enum]::Parse([ConsoleColor], $colorName, $true)
+}
+
+if (Test-Path $configPath) {
+    foreach ($line in Get-Content $configPath) {
+        if ($line -match '^\s*([^=]+)\s*=\s*(.+)\s*$') {
+            $key = $matches[1].ToLower()
+            $config[$key] = $matches[2]
+        }
+    }
+}
+
+function Resolve-LogoPath {
+    param([hashtable]$cfg)
+
+    $defaultLogoDir  = Join-Path $env:APPDATA "xpfetch\logos"
+    $logoDir  = if ($cfg.ContainsKey("logodir")  -and $cfg["logodir"].Trim())  { $cfg["logodir"].Trim() }  else { $defaultLogoDir }
+    $logoFile = if ($cfg.ContainsKey("logofile") -and $cfg["logofile"].Trim()) { $cfg["logofile"].Trim() } else {
+        $id = 1
+        if ($cfg.ContainsKey("logoid")) {
+            [void][int]::TryParse(($cfg["logoid"].ToString()), [ref]$id)
+            if ($id -lt 1) { $id = 1 }
+        }
+        "logo$($id).txt"
+    }
+
+    if ([System.IO.Path]::IsPathRooted($logoFile)) { $logoFile } else { Join-Path $logoDir $logoFile }
+}
+
+function Load-LogoLines {
+    param([hashtable]$cfg)
+
+    $path = Resolve-LogoPath -cfg $cfg
+    if (Test-Path $path) {
+        return ,(Get-Content -LiteralPath $path)  #
+    }
+
+    return @(
 "           ++++++++++++                      ",
 "        ++++++++++++++++++                   ",
 "        ++++++++++++++++++  +               ",
@@ -22,44 +125,24 @@ $logoLines = @(
 "               ++  ++++++++++++++++++       ",
 "                   ++++++++++++++++++       ",
 "                     +++++++++++++          "
-)
-
-$configPath = "$env:APPDATA\xpfetch\xpconf.ini"
-$config = @{}
-
-function Get-ConsoleColor([string]$colorName) {
-    if ([string]::IsNullOrEmpty($colorName)) { return [ConsoleColor]::White }
-    $colorName = $colorName.Trim()
-    return [Enum]::Parse([ConsoleColor], $colorName, $true)
+    )
 }
 
-if (Test-Path $configPath) {
-    foreach ($line in Get-Content $configPath) {
-        if ($line -match '^\s*([^=]+)\s*=\s*(.+)\s*$') {
-            $config[$matches[1]] = $matches[2]
-        }
-    }
-}
+$logoLines = Load-LogoLines -cfg $config
 
-$logoColor  = if ($config.ContainsKey("logoColor")) { Get-ConsoleColor $config["logoColor"] } else { [ConsoleColor]::Cyan }
-$textColor1 = if ($config.ContainsKey("TextColor1")) { Get-ConsoleColor $config["TextColor1"] } else { [ConsoleColor]::White }
-$textColor2 = if ($config.ContainsKey("TextColor2")) { Get-ConsoleColor $config["TextColor2"] } else { [ConsoleColor]::Gray }
+$logoColor  = if ($config.ContainsKey("logocolor")) { Get-ConsoleColor $config["logocolor"] } else { [ConsoleColor]::Cyan }
+$textColor1 = if ($config.ContainsKey("textcolor1")) { Get-ConsoleColor $config["textcolor1"] } else { [ConsoleColor]::White }
+$textColor2 = if ($config.ContainsKey("textcolor2")) { Get-ConsoleColor $config["textcolor2"] } else { [ConsoleColor]::Gray }
 
-$diskPercent = $false
-if ($config.ContainsKey("diskPercent")) { $diskPercent = [System.Convert]::ToBoolean($config["diskPercent"]) }
+$diskPercent    = ($config.ContainsKey("diskpercent")    -and [System.Convert]::ToBoolean($config["diskpercent"]))
+$showVRAM       = ($config.ContainsKey("showvram")       -and [System.Convert]::ToBoolean($config["showvram"]))
+$ramPercent     = ($config.ContainsKey("rampercent")     -and [System.Convert]::ToBoolean($config["rampercent"]))
+$batteryEnabled = ($config.ContainsKey("batterypercent") -and [System.Convert]::ToBoolean($config["batterypercent"]))
 
-$showVRAM = $false
-if ($config.ContainsKey("showVRAM")) { $showVRAM = [System.Convert]::ToBoolean($config["showVRAM"]) }
-
-$ramPercent = $false
-if ($config.ContainsKey("ramPercent")) { $ramPercent = [System.Convert]::ToBoolean($config["ramPercent"]) }
-
-$batteryEnabled = $false
-if ($config.ContainsKey("batteryPercent")) { $batteryEnabled = [System.Convert]::ToBoolean($config["batteryPercent"]) }
-
-function Convert-WmiDate($wmiDate) { 
+function Convert-WmiDate($wmiDate) {
     return [datetime]::ParseExact($wmiDate.Substring(0,14), "yyyyMMddHHmmss", $null)
 }
+
 
 $os = Get-WmiObject Win32_OperatingSystem
 $cs = Get-WmiObject Win32_ComputerSystem
@@ -70,6 +153,7 @@ $gpuObjects = Get-WmiObject Win32_VideoController
 $gpuCount = $gpuObjects.Count
 $gpuLines = @()
 
+# Battery
 try {
     $battery = Get-WmiObject Win32_Battery
     if ($battery) {
@@ -88,10 +172,11 @@ switch ($battery.BatteryStatus) {
     default                     { $batteryStatus = " (Unknown)" }
 }
 
+# GPU(s)
 $gpuIndex = 1
 foreach ($gpu in $gpuObjects) {
     if ($showVRAM -eq $true) {
-        if ($gpu.AdapterRAM) { 
+        if ($gpu.AdapterRAM) {
             $vramMB = [math]::Round($gpu.AdapterRAM / 1MB)
             $gpuName = "$($gpu.Name) ($vramMB MB)"
         } else {
@@ -111,6 +196,7 @@ foreach ($gpu in $gpuObjects) {
     }
 }
 
+# Monitor(s)
 $monitorResolutions = @()
 foreach ($gpu in $gpuObjects) {
     if ($gpu.CurrentHorizontalResolution -and $gpu.CurrentVerticalResolution) {
@@ -121,46 +207,82 @@ foreach ($gpu in $gpuObjects) {
 }
 $resolutionLine = @("Resolution: ", ($monitorResolutions -join ", "))
 
+# Theme
 $themeName = "Unknown"
 try {
     $themeReg = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ThemeManager" -ErrorAction SilentlyContinue
     if ($themeReg) {
         if ($themeReg.CurrentTheme) { $themeName = [System.IO.Path]::GetFileNameWithoutExtension($themeReg.CurrentTheme) }
-        elseif ($themeReg.DllName) { $themeName = [System.IO.Path]::GetFileNameWithoutExtension($themeReg.DllName) }
+        elseif ($themeReg.DllName)   { $themeName = [System.IO.Path]::GetFileNameWithoutExtension($themeReg.DllName) }
         if ($themeReg.ThemeActive -eq "0" -and $themeName -eq "Unknown") { $themeName = "Windows Classic" }
     }
 } catch { $themeName = "Unknown" }
 
+# Network
 $validIPs = @()
-$adapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPAddress -ne $null -and $_.IPEnabled -eq $true }
+$adapters = Get-WmiObject Win32_NetworkAdapterConfiguration |
+    Where-Object { $_.IPAddress -ne $null -and $_.IPEnabled -eq $true }
+
 foreach ($adapter in $adapters) {
-    foreach ($ip in $adapter.IPAddress) {
-        if ($ip -match '^\d{1,3}(\.\d{1,3}){3}$' -and $ip -ne "0.0.0.0" -and -not $ip.StartsWith("127.") -and -not $ip.StartsWith("169.")) {
-            $validIPs += $ip
+    for ($i = 0; $i -lt $adapter.IPAddress.Count; $i++) {
+        $ip = $adapter.IPAddress[$i]
+        $mask = $null
+        if ($adapter.IPSubnet.Count -gt $i) {
+            $mask = $adapter.IPSubnet[$i]
+        }
+
+        if ($ip -match '^\d{1,3}(\.\d{1,3}){3}$' -and
+            $ip -ne "0.0.0.0" -and
+            -not $ip.StartsWith("127.") -and
+            -not $ip.StartsWith("169.")) {
+
+            $cidrSuffix = ""
+            if ($mask -and $mask -match '^\d{1,3}(\.\d{1,3}){3}$') {
+                $cidrBits = ($mask -split '\.') |
+                    ForEach-Object { [Convert]::ToString([int]$_, 2).PadLeft(8,'0') } |
+                    ForEach-Object { ($_ -split '1').Count - 1 } |
+                    Measure-Object -Sum | Select-Object -ExpandProperty Sum
+                $cidrSuffix = "/$cidrBits"
+            }
+
+            $validIPs += "$ip$cidrSuffix"
         }
     }
 }
+
 $ipAddress = if ($validIPs.Count -gt 0) { $validIPs[0] } else { "Unknown" }
 
+# Uptime
 $uptime = ((Get-Date) - $os.ConvertToDateTime($os.LastBootUpTime))
 $uptimeStr = "{0}d {1}h {2}m" -f $uptime.Days, $uptime.Hours, $uptime.Minutes
 
+# Hostname
 $username = $cs.UserName
 if ($username -like "*\*") { $username = $username.Split('\')[-1] }
 $userHostLine = "$username@$($cs.Name)"
 $separatorLine = "-" * $userHostLine.Length
 
+# Memory
 $totalMemoryKB = $os.TotalVisibleMemorySize
-$freeMemoryKB = $os.FreePhysicalMemory
-$usedMemoryKB = $totalMemoryKB - $freeMemoryKB
+$freeMemoryKB  = $os.FreePhysicalMemory
+$usedMemoryKB  = $totalMemoryKB - $freeMemoryKB
 $totalMB = [math]::Round($totalMemoryKB / 1024)
-$usedMB = [math]::Round($usedMemoryKB / 1024)
-$ramDisplay = "$usedMB MB / $totalMB MB"
+$usedMB  = [math]::Round($usedMemoryKB / 1024)
+
+if ($totalMB -ge 4096) {
+    $totalGB = [math]::Round($totalMB / 1024, 1)
+    $usedGB  = [math]::Round($usedMB / 1024, 1)
+    $ramDisplay = "$usedGB GB / $totalGB GB"
+} else {
+    $ramDisplay = "$usedMB MB / $totalMB MB"
+}
+
 if ($ramPercent) {
     $ramPercentUsed = [math]::Round(($usedMemoryKB / $totalMemoryKB) * 100)
     $ramDisplay += " ($ramPercentUsed`%)"
 }
 
+# Storage
 $driveInfoLines = @()
 $drives = Get-WmiObject Win32_LogicalDisk -Filter "DriveType = 3"
 foreach ($drive in $drives) {
@@ -176,11 +298,11 @@ foreach ($drive in $drives) {
     }
 }
 
+# CPU
 $threads = ""
 if ($cpu.NumberOfCores -ne $cpu.NumberOfLogicalProcessors){
     $threads = " ($($cpu.NumberOfLogicalProcessors) threads)"
 }
-
 
 $topInfoLines = @(@("", $userHostLine), @("", $separatorLine))
 $infoLines = @(
@@ -212,6 +334,17 @@ if ($batteryEnabled -and $batteryPercent -ne "N/A") {
 $finalInfoLines += ,@("Uptime: ", $uptimeStr)
 
 $allInfoLines = $topInfoLines + $finalInfoLines
+
+$logoWidth = 42
+if ($logoLines -and $logoLines.Count -gt 0) {
+    $maxVis = 0
+    foreach ($ln in $logoLines) {
+        $v = Measure-VisibleLength $ln
+        if ($v -gt $maxVis) { $maxVis = $v }
+    }
+    if ($maxVis -gt 0) { $logoWidth = $maxVis }
+}
+
 $logoHeight = $logoLines.Count
 $infoHeight = $allInfoLines.Count
 $paddingTop = [Math]::Max([Math]::Floor(($logoHeight - $infoHeight) / 2), 0)
@@ -222,14 +355,18 @@ $maxLines = [Math]::Max($logoLines.Count, $paddedInfoLines.Count)
 
 Write-Host ""
 for ($i = 0; $i -lt $maxLines; $i++) {
-    $logo = if ($i -lt $logoLines.Count) { $logoLines[$i] } else { " " * 42 }
+    $logo = if ($i -lt $logoLines.Count) { $logoLines[$i] } else { " " * $logoWidth }
+
     if ($i -lt $paddedInfoLines.Count) {
         $label = $paddedInfoLines[$i][0]
         $value = $paddedInfoLines[$i][1]
     } else { $label = ""; $value = "" }
 
-    Write-Host -NoNewline $logo -ForegroundColor $logoColor
-    Write-Host -NoNewline "    "
+    Write-ColoredAscii -Line $logo -DefaultColor $logoColor
+	
+    $lineVisible = Measure-VisibleLength $logo
+    $pad = [Math]::Max($logoWidth - $lineVisible, 0) + 4  
+    if ($pad -gt 0) { Write-Host -NoNewline (" " * $pad) }
 
     if ($value -ne "") {
         if ($label -eq "") {
@@ -238,6 +375,11 @@ for ($i = 0; $i -lt $maxLines; $i++) {
             Write-Host $label -NoNewline -ForegroundColor $textColor1
             Write-Host $value -ForegroundColor $textColor2
         }
-    } else { Write-Host "" }
+    } else {
+        Write-Host ""
+    }
 }
 Write-Host ""
+
+[Console]::ForegroundColor = $origFG
+[Console]::BackgroundColor = $origBG
